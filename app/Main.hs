@@ -66,7 +66,7 @@ main = do
 handleRequest :: HttpRequest -> IO HttpResponse
 handleRequest req = do
   return $ case _reqPath req of
-    "/index.html" -> HttpResponse (_reqVersion req) statusOk [] ""
+    "/" -> HttpResponse (_reqVersion req) statusOk [] ""
     _ -> HttpResponse (_reqVersion req) statusNotFound [] ""
 
 data HttpRequest = HttpRequest
