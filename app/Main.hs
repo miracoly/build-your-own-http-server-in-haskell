@@ -15,6 +15,7 @@ import System.Log.Formatter (simpleLogFormatter)
 import System.Log.Handler (setFormatter)
 import System.Log.Handler.Simple (streamHandler)
 import System.Log.Logger (Priority (INFO), infoM, rootLoggerName, setHandlers, setLevel, updateGlobalLogger)
+import Data.List.Split (splitOn)
 
 main :: IO ()
 main = do
@@ -70,17 +71,9 @@ handleRequest :: HttpRequest -> IO HttpResponse
 handleRequest req = do
   return $ case _reqPath req of
     "/" -> HttpResponse (_reqVersion req) statusOk [("Content-Type", "text/plain")] ""
+    "/user-agent" -> mkUserAgentResponse (_reqHeaders req)
     (BC.stripPrefix "/echo/" -> Just str) -> mkEchoResponse str
     _ -> HttpResponse (_reqVersion req) statusNotFound [] ""
-
-mkEchoResponse :: ByteString -> HttpResponse
-mkEchoResponse body = HttpResponse "HTTP/1.1" statusOk headers (traceShowId body)
-  where
-    headers =
-      [ ("Content-Type", "text/plain"),
-        ("Content-Length", (BC.pack . show . BC.length) body)
-      ]
-
 data HttpRequest = HttpRequest
   { _reqVersion :: ByteString,
     _reqMethod :: ByteString,
@@ -95,11 +88,18 @@ parseRequest raw = do
   version <- getVersion
   path <- getPath
   method <- getMethod
-  return $ HttpRequest version method path [] ""
+  return $ HttpRequest version method path getHeaders ""
   where
     getMethod = headMay $ BC.split ' ' raw
     getPath = tailMay (BC.split ' ' raw) >>= headMay
     getVersion = tailMay (BC.split ' ' raw) >>= tailMay >>= headMay >>= headMay . BC.split '\r'
+    getHeaders = parseHeaders raw
+
+-- TODO
+parseHeaders :: ByteString -> [(ByteString, ByteString)]
+parseHeaders rawHeaders = []
+  where
+    bla = splitOn "\r\n" $ BC.unpack rawHeaders
 
 data HttpResponse = HttpResponse
   { _resVersion :: ByteString,
@@ -108,6 +108,23 @@ data HttpResponse = HttpResponse
     _resBody :: ByteString
   }
   deriving (Show)
+
+mkUserAgentResponse :: [(ByteString, ByteString)] -> HttpResponse
+mkUserAgentResponse reqHeaders =
+  let mUserAgent = lookup "User-Agent" reqHeaders
+   in case mUserAgent of
+        Just userAgent -> HttpResponse "HTTP/0.1" statusOk resHeaders userAgent
+          where
+            resHeaders = [("Content-Type", "text/plain"), ("Content-Length", (BC.pack . show . BC.length) userAgent)]
+        Nothing -> HttpResponse "HTTP/0.1" statusNotFound [] ""
+
+mkEchoResponse :: ByteString -> HttpResponse
+mkEchoResponse body = HttpResponse "HTTP/0.1" statusOk headers (traceShowId body)
+  where
+    headers =
+      [ ("Content-Type", "text/plain"),
+        ("Content-Length", (BC.pack . show . BC.length) body)
+      ]
 
 data HttpStatus = HttpStatus
   { _statusCode :: Int,
