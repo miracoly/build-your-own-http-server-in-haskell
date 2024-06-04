@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Main (main) where
 
@@ -66,8 +67,17 @@ main = do
 handleRequest :: HttpRequest -> IO HttpResponse
 handleRequest req = do
   return $ case _reqPath req of
-    "/" -> HttpResponse (_reqVersion req) statusOk [] ""
+    "/" -> HttpResponse (_reqVersion req) statusOk [("Content-Type", "text/plain")] ""
+    (BC.stripPrefix "/echo/" -> Just str) -> mkEchoResponse str
     _ -> HttpResponse (_reqVersion req) statusNotFound [] ""
+
+mkEchoResponse :: ByteString -> HttpResponse
+mkEchoResponse body = HttpResponse "HTTP/1.1" statusOk headers body
+  where
+    headers =
+      [ ("Content-Type", "text/plain"),
+        ("Content-Length", (BC.pack . show . BC.length) body)
+      ]
 
 data HttpRequest = HttpRequest
   { _reqVersion :: ByteString,
@@ -113,7 +123,9 @@ statusNotFound :: HttpStatus
 statusNotFound = HttpStatus 404 "Not Found"
 
 serializeResponse :: HttpResponse -> ByteString
-serializeResponse res = BC.intercalate "\r\n" [version <> " " <> status, "\r\n"]
+serializeResponse res = BC.intercalate "\r\n" [version <> " " <> status, headers, "\r\n", body]
   where
     version = _resVersion res
     status = serializeStatus $ _resStatus res
+    headers = BC.intercalate "\r\n" $ map (\(k, v) -> k <> ": " <> v) (_resHeaders res)
+    body = _resBody res
