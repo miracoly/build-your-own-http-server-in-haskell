@@ -6,6 +6,7 @@ module Main (main) where
 import Control.Monad (forever)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BC
+import Debug.Trace (traceShowId)
 import Network.Socket
 import Network.Socket.ByteString (recv, sendAll)
 import Safe (headMay, tailMay)
@@ -58,8 +59,9 @@ main = do
       Just req -> do
         logInfo $ "Parsed request: " <> show req
         response <- handleRequest req
+        logInfo $ "Response: " <> show response
         let serialized = serializeResponse response
-        BC.putStrLn $ "Sending response: " <> serialized
+        logInfo $ "Sending response: " <> show (BC.unpack serialized)
         sendAll clientSocket serialized
 
     close clientSocket
@@ -72,7 +74,7 @@ handleRequest req = do
     _ -> HttpResponse (_reqVersion req) statusNotFound [] ""
 
 mkEchoResponse :: ByteString -> HttpResponse
-mkEchoResponse body = HttpResponse "HTTP/1.1" statusOk headers body
+mkEchoResponse body = HttpResponse "HTTP/1.1" statusOk headers (traceShowId body)
   where
     headers =
       [ ("Content-Type", "text/plain"),
@@ -113,9 +115,6 @@ data HttpStatus = HttpStatus
   }
   deriving (Show)
 
-serializeStatus :: HttpStatus -> ByteString
-serializeStatus status = BC.pack (show (_statusCode status)) <> " " <> _statusMessage status
-
 statusOk :: HttpStatus
 statusOk = HttpStatus 200 "OK"
 
@@ -123,9 +122,12 @@ statusNotFound :: HttpStatus
 statusNotFound = HttpStatus 404 "Not Found"
 
 serializeResponse :: HttpResponse -> ByteString
-serializeResponse res = BC.intercalate "\r\n" [version <> " " <> status, headers, "\r\n", body]
+serializeResponse res = BC.intercalate "\r\n" [version <> " " <> status, headers, "", body]
   where
     version = _resVersion res
     status = serializeStatus $ _resStatus res
     headers = BC.intercalate "\r\n" $ map (\(k, v) -> k <> ": " <> v) (_resHeaders res)
     body = _resBody res
+
+serializeStatus :: HttpStatus -> ByteString
+serializeStatus status = BC.pack (show (_statusCode status)) <> " " <> _statusMessage status
