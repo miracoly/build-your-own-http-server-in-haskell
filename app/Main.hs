@@ -17,13 +17,13 @@ import System.Log.Formatter (simpleLogFormatter)
 import System.Log.Handler (setFormatter)
 import System.Log.Handler.Simple (streamHandler)
 import System.Log.Logger (Priority (INFO), infoM, rootLoggerName, setHandlers, setLevel, updateGlobalLogger)
+import Control.Concurrent (forkIO)
 
 main :: IO ()
 main = do
   handler <- streamHandler stdout INFO >>= \lh -> return $ setFormatter lh (simpleLogFormatter "[$time : $loggername : $prio] $msg")
   updateGlobalLogger rootLoggerName (setHandlers [handler])
   updateGlobalLogger rootLoggerName (setLevel INFO)
-  let logInfo = infoM "Main"
 
   hSetBuffering stdout LineBuffering
 
@@ -50,8 +50,15 @@ main = do
   forever $ do
     (clientSocket, clientAddr) <- accept serverSocket
     logInfo $ "Accepted connection from " <> show clientAddr <> "."
+    forkIO $ handleRequest clientSocket
+
+logInfo :: String -> IO ()
+logInfo = infoM "Main"
+
+handleRequest :: Socket -> IO ()
+handleRequest clientSocket = do
     -- Handle the clientSocket as needed...
-    rawRequest <- recv clientSocket 1024
+    rawRequest <- recv clientSocket 4096
     logInfo $ "Request: " <> BC.unpack rawRequest
     case parseRequest rawRequest of
       Nothing -> do
@@ -59,16 +66,15 @@ main = do
         sendAll clientSocket "HTTP/1.1 400 Bad Request\r\n\r\n"
       Just req -> do
         logInfo $ "Parsed request: " <> show req
-        let response = handleRequest req
+        let response = respond req
         logInfo $ "Response: " <> show response
         let serialized = serializeResponse response
         logInfo $ "Sending response: " <> show (BC.unpack serialized)
         sendAll clientSocket serialized
-
     close clientSocket
 
-handleRequest :: HttpRequest -> HttpResponse
-handleRequest req =
+respond :: HttpRequest -> HttpResponse
+respond req =
   case _reqPath req of
     "/" -> HttpResponse (_reqVersion req) statusOk [("Content-Type", "text/plain")] ""
     "/user-agent" -> mkUserAgentResponse (_reqHeaders req)
