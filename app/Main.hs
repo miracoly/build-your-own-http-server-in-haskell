@@ -6,6 +6,7 @@ module Main (main) where
 import Control.Monad (forever)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BC
+import Data.List.Split (splitOn)
 import Debug.Trace (traceShowId)
 import Network.Socket
 import Network.Socket.ByteString (recv, sendAll)
@@ -15,7 +16,6 @@ import System.Log.Formatter (simpleLogFormatter)
 import System.Log.Handler (setFormatter)
 import System.Log.Handler.Simple (streamHandler)
 import System.Log.Logger (Priority (INFO), infoM, rootLoggerName, setHandlers, setLevel, updateGlobalLogger)
-import Data.List.Split (splitOn)
 
 main :: IO ()
 main = do
@@ -74,6 +74,7 @@ handleRequest req = do
     "/user-agent" -> mkUserAgentResponse (_reqHeaders req)
     (BC.stripPrefix "/echo/" -> Just str) -> mkEchoResponse str
     _ -> HttpResponse (_reqVersion req) statusNotFound [] ""
+
 data HttpRequest = HttpRequest
   { _reqVersion :: ByteString,
     _reqMethod :: ByteString,
@@ -99,7 +100,11 @@ parseRequest raw = do
 parseHeaders :: ByteString -> [(ByteString, ByteString)]
 parseHeaders rawHeaders = []
   where
-    bla = splitOn "\r\n" $ BC.unpack rawHeaders
+    split :: ByteString -> [String]
+    split = takeWhile (/= "\r\n") . drop 1 . splitOn "\r\n" . BC.unpack
+    parse :: [String] -> [(ByteString, ByteString)]
+    parse = map (\(k:v:_) -> (k, v)) . bla 
+    bla = map (splitOn ": ")
 
 data HttpResponse = HttpResponse
   { _resVersion :: ByteString,
