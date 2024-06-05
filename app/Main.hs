@@ -59,7 +59,7 @@ main = do
         sendAll clientSocket "HTTP/1.1 400 Bad Request\r\n\r\n"
       Just req -> do
         logInfo $ "Parsed request: " <> show req
-        response <- handleRequest req
+        let response = handleRequest req
         logInfo $ "Response: " <> show response
         let serialized = serializeResponse response
         logInfo $ "Sending response: " <> show (BC.unpack serialized)
@@ -67,9 +67,9 @@ main = do
 
     close clientSocket
 
-handleRequest :: HttpRequest -> IO HttpResponse
-handleRequest req = do
-  return $ case _reqPath req of
+handleRequest :: HttpRequest -> HttpResponse
+handleRequest req =
+  case _reqPath req of
     "/" -> HttpResponse (_reqVersion req) statusOk [("Content-Type", "text/plain")] ""
     "/user-agent" -> mkUserAgentResponse (_reqHeaders req)
     (BC.stripPrefix "/echo/" -> Just str) -> mkEchoResponse str
