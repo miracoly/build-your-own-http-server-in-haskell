@@ -4,7 +4,7 @@
 module Main (main) where
 
 import Control.Concurrent (forkIO)
-import Control.Exception (catch, IOException)
+import Control.Exception (IOException, catch)
 import Control.Monad (forever)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BC
@@ -12,12 +12,41 @@ import Data.List.Split (splitOn)
 import Data.Maybe (mapMaybe)
 import Network.Socket
 import Network.Socket.ByteString (recv, sendAll)
+import Options.Applicative (Parser, auto, execParser, help, info, long, metavar, option, short, strOption, value)
 import Safe (headMay, tailMay)
 import System.IO (BufferMode (..), hSetBuffering, stdout)
 import System.Log.Formatter (simpleLogFormatter)
 import System.Log.Handler (setFormatter)
 import System.Log.Handler.Simple (streamHandler)
-import System.Log.Logger (Priority (INFO), infoM, rootLoggerName, setHandlers, setLevel, updateGlobalLogger, errorM)
+import System.Log.Logger (Priority (INFO), errorM, infoM, rootLoggerName, setHandlers, setLevel, updateGlobalLogger)
+import Control.Monad.Reader (ReaderT (runReaderT), MonadIO (liftIO), runReader, ask, MonadReader (ask))
+
+data Config = Config
+  { _directory :: FilePath,
+    _port :: Int
+  }
+  deriving (Show, Eq)
+
+argsParser :: Parser Config
+argsParser =
+  Config
+    <$> strOption
+      ( long "directory"
+          <> short 'd'
+          <> metavar "DIRECTORY"
+          <> value "./"
+          <> help "Directory to serve files from"
+      )
+    <*> option
+      auto
+      ( long "port"
+          <> short 'p'
+          <> metavar "PORT"
+          <> value 4221
+          <> help "Port to listen on"
+      )
+
+type App = ReaderT Config IO
 
 main :: IO ()
 main = do
@@ -25,13 +54,16 @@ main = do
   updateGlobalLogger rootLoggerName (setHandlers [handler])
   updateGlobalLogger rootLoggerName (setLevel INFO)
 
+  config <- execParser $ info argsParser mempty
+  logInfo $ "Configuration: " <> show config
+
   hSetBuffering stdout LineBuffering
 
   -- You can use print statements as follows for debugging, they'll be visible when running tests.
   logInfo "Logs from your program will appear here"
 
   let host = "127.0.0.1"
-      port = "4221"
+      port = (show . _port) config
 
   logInfo $ "Listening on " <> host <> ":" <> port
 
@@ -50,7 +82,7 @@ main = do
   forever $ do
     (clientSocket, clientAddr) <- accept serverSocket
     logInfo $ "Accepted connection from " <> show clientAddr <> "."
-    forkIO $ handleRequest clientSocket
+    forkIO $ runReaderT (handleRequest clientSocket) config
 
 logInfo :: String -> IO ()
 logInfo = infoM "Main"
@@ -58,25 +90,27 @@ logInfo = infoM "Main"
 logError :: String -> IO ()
 logError = errorM "Main"
 
-handleRequest :: Socket -> IO ()
+handleRequest :: Socket -> App ()
 handleRequest clientSocket = do
-  -- Handle the clientSocket as needed...
-  rawRequest <- recv clientSocket 4096
-  logInfo $ "Request: " <> BC.unpack rawRequest
-  case parseRequest rawRequest of
-    Nothing -> do
-      logInfo "Failed to parse request"
-      sendAll clientSocket "HTTP/1.1 400 Bad Request\r\n\r\n"
-    Just req -> do
-      logInfo $ "Parsed request: " <> show req
-      response <- respond req
-      logInfo $ "Response: " <> show response
-      let serialized = serializeResponse response
-      logInfo $ "Sending response: " <> show (BC.unpack serialized)
-      sendAll clientSocket serialized
-  close clientSocket
+  config <- ask
+  liftIO $ do
+    -- Handle the clientSocket as needed...
+    rawRequest <- recv clientSocket 4096
+    logInfo $ "Request: " <> BC.unpack rawRequest
+    case parseRequest rawRequest of
+      Nothing -> do
+        logInfo "Failed to parse request"
+        sendAll clientSocket "HTTP/1.1 400 Bad Request\r\n\r\n"
+      Just req -> do
+        logInfo $ "Parsed request: " <> show req
+        response <- runReaderT (respond req) config
+        logInfo $ "Response: " <> show response
+        let serialized = serializeResponse response
+        logInfo $ "Sending response: " <> show (BC.unpack serialized)
+        sendAll clientSocket serialized
+    close clientSocket
 
-respond :: HttpRequest -> IO HttpResponse
+respond :: HttpRequest -> App HttpResponse
 respond req =
   case _reqPath req of
     "/" -> return $ HttpResponse (_reqVersion req) statusOk [("Content-Type", "text/plain")] ""
@@ -146,20 +180,23 @@ mkEchoResponse body = HttpResponse "HTTP/1.1" statusOk headers body
         ("Content-Length", (BC.pack . show . BC.length) body)
       ]
 
-mkFileResponse :: ByteString -> IO HttpResponse
-mkFileResponse filename = catch (successResponse filename) errorResponse
+mkFileResponse :: ByteString -> App HttpResponse
+mkFileResponse filename = do
+  config <- ask
+  let path = _directory config <> BC.unpack filename
+  liftIO $ catch (successResponse path) errorResponse
   where
-    readContent = fmap BC.pack . readFile . BC.unpack
-    successResponse :: ByteString -> IO HttpResponse
-    successResponse fileName = do
-      fileContent <- readContent fileName
+    readContent = fmap BC.pack . readFile
+    successResponse :: FilePath -> IO HttpResponse
+    successResponse path = do
+      fileContent <- readContent path
       return $ HttpResponse "HTTP/1.1" statusOk (headers fileContent) fileContent
     errorResponse :: IOException -> IO HttpResponse
     errorResponse e = do
       logError $ "Cannot read file: " <> show e
       return $ HttpResponse "HTTP/1.1" statusNotFound [] ""
     headers content =
-      [ ("Content-Type", "text/plain"),
+      [ ("Content-Type", "application/octet-stream"),
         ("Content-Length", (BC.pack . show . BC.length) content)
       ]
 
