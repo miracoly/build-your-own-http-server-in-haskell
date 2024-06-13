@@ -2,3 +2,4 @@
 hs-http-server-clone.cabal
 *~
 tags
+.idea/
