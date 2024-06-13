@@ -3,12 +3,13 @@
 
 module Main (main) where
 
+import Control.Concurrent (forkIO)
+import Control.Exception (catch, IOException)
 import Control.Monad (forever)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BC
 import Data.List.Split (splitOn)
 import Data.Maybe (mapMaybe)
-import Debug.Trace (traceShowId)
 import Network.Socket
 import Network.Socket.ByteString (recv, sendAll)
 import Safe (headMay, tailMay)
@@ -16,8 +17,7 @@ import System.IO (BufferMode (..), hSetBuffering, stdout)
 import System.Log.Formatter (simpleLogFormatter)
 import System.Log.Handler (setFormatter)
 import System.Log.Handler.Simple (streamHandler)
-import System.Log.Logger (Priority (INFO), infoM, rootLoggerName, setHandlers, setLevel, updateGlobalLogger)
-import Control.Concurrent (forkIO)
+import System.Log.Logger (Priority (INFO), infoM, rootLoggerName, setHandlers, setLevel, updateGlobalLogger, errorM)
 
 main :: IO ()
 main = do
@@ -55,31 +55,35 @@ main = do
 logInfo :: String -> IO ()
 logInfo = infoM "Main"
 
+logError :: String -> IO ()
+logError = errorM "Main"
+
 handleRequest :: Socket -> IO ()
 handleRequest clientSocket = do
-    -- Handle the clientSocket as needed...
-    rawRequest <- recv clientSocket 4096
-    logInfo $ "Request: " <> BC.unpack rawRequest
-    case parseRequest rawRequest of
-      Nothing -> do
-        logInfo "Failed to parse request"
-        sendAll clientSocket "HTTP/1.1 400 Bad Request\r\n\r\n"
-      Just req -> do
-        logInfo $ "Parsed request: " <> show req
-        let response = respond req
-        logInfo $ "Response: " <> show response
-        let serialized = serializeResponse response
-        logInfo $ "Sending response: " <> show (BC.unpack serialized)
-        sendAll clientSocket serialized
-    close clientSocket
+  -- Handle the clientSocket as needed...
+  rawRequest <- recv clientSocket 4096
+  logInfo $ "Request: " <> BC.unpack rawRequest
+  case parseRequest rawRequest of
+    Nothing -> do
+      logInfo "Failed to parse request"
+      sendAll clientSocket "HTTP/1.1 400 Bad Request\r\n\r\n"
+    Just req -> do
+      logInfo $ "Parsed request: " <> show req
+      response <- respond req
+      logInfo $ "Response: " <> show response
+      let serialized = serializeResponse response
+      logInfo $ "Sending response: " <> show (BC.unpack serialized)
+      sendAll clientSocket serialized
+  close clientSocket
 
-respond :: HttpRequest -> HttpResponse
+respond :: HttpRequest -> IO HttpResponse
 respond req =
   case _reqPath req of
-    "/" -> HttpResponse (_reqVersion req) statusOk [("Content-Type", "text/plain")] ""
-    "/user-agent" -> mkUserAgentResponse (_reqHeaders req)
-    (BC.stripPrefix "/echo/" -> Just str) -> mkEchoResponse str
-    _ -> HttpResponse (_reqVersion req) statusNotFound [] ""
+    "/" -> return $ HttpResponse (_reqVersion req) statusOk [("Content-Type", "text/plain")] ""
+    "/user-agent" -> return $ mkUserAgentResponse (_reqHeaders req)
+    (BC.stripPrefix "/echo/" -> Just str) -> return $ mkEchoResponse str
+    (BC.stripPrefix "/files/" -> Just fileName) -> mkFileResponse fileName
+    _ -> return $ HttpResponse (_reqVersion req) statusNotFound [] ""
 
 data HttpRequest = HttpRequest
   { _reqVersion :: ByteString,
@@ -135,11 +139,28 @@ mkUserAgentResponse reqHeaders =
         Nothing -> HttpResponse "HTTP/1.1" statusNotFound [] ""
 
 mkEchoResponse :: ByteString -> HttpResponse
-mkEchoResponse body = HttpResponse "HTTP/1.1" statusOk headers (traceShowId body)
+mkEchoResponse body = HttpResponse "HTTP/1.1" statusOk headers body
   where
     headers =
       [ ("Content-Type", "text/plain"),
         ("Content-Length", (BC.pack . show . BC.length) body)
+      ]
+
+mkFileResponse :: ByteString -> IO HttpResponse
+mkFileResponse filename = catch (successResponse filename) errorResponse
+  where
+    readContent = fmap BC.pack . readFile . BC.unpack
+    successResponse :: ByteString -> IO HttpResponse
+    successResponse fileName = do
+      fileContent <- readContent fileName
+      return $ HttpResponse "HTTP/1.1" statusOk (headers fileContent) fileContent
+    errorResponse :: IOException -> IO HttpResponse
+    errorResponse e = do
+      logError $ "Cannot read file: " <> show e
+      return $ HttpResponse "HTTP/1.1" statusNotFound [] ""
+    headers content =
+      [ ("Content-Type", "text/plain"),
+        ("Content-Length", (BC.pack . show . BC.length) content)
       ]
 
 data HttpStatus = HttpStatus
