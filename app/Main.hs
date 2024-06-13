@@ -19,7 +19,7 @@ import System.Log.Formatter (simpleLogFormatter)
 import System.Log.Handler (setFormatter)
 import System.Log.Handler.Simple (streamHandler)
 import System.Log.Logger (Priority (INFO), errorM, infoM, rootLoggerName, setHandlers, setLevel, updateGlobalLogger)
-import Control.Monad.Reader (ReaderT (runReaderT), MonadIO (liftIO), runReader, ask, MonadReader (ask))
+import Control.Monad.Reader (ReaderT (runReaderT), MonadIO (liftIO), ask, MonadReader (ask))
 
 data Config = Config
   { _directory :: FilePath,
