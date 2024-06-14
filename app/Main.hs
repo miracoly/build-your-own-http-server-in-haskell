@@ -150,12 +150,14 @@ parseRequest raw = do
   version <- getVersion
   path <- getPath
   method <- getMethod
-  return $ HttpRequest version method path getHeaders ""
+  return $ HttpRequest version method path getHeaders getBody
   where
     getMethod = headMay $ BC.split ' ' raw
     getPath = tailMay (BC.split ' ' raw) >>= headMay
     getVersion = tailMay (BC.split ' ' raw) >>= tailMay >>= headMay >>= headMay . BC.split '\r'
     getHeaders = parseHeaders raw
+    getBody :: ByteString
+    getBody = (BC.pack . last . splitOn "\r\n" . BC.unpack) raw
 
 parseHeaders :: ByteString -> [(ByteString, ByteString)]
 parseHeaders = parse . split
