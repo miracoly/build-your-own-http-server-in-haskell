@@ -6,10 +6,12 @@ module Main (main) where
 import Control.Concurrent (forkIO)
 import Control.Exception (IOException, catch)
 import Control.Monad (forever)
+import Control.Monad.Reader (MonadIO (liftIO), MonadReader (ask), ReaderT (runReaderT), ask)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BC
 import Data.List.Split (splitOn)
 import Data.Maybe (mapMaybe)
+import GHC.Profiling (requestHeapCensus)
 import Network.Socket
 import Network.Socket.ByteString (recv, sendAll)
 import Options.Applicative (Parser, auto, execParser, help, info, long, metavar, option, short, strOption, value)
@@ -19,7 +21,6 @@ import System.Log.Formatter (simpleLogFormatter)
 import System.Log.Handler (setFormatter)
 import System.Log.Handler.Simple (streamHandler)
 import System.Log.Logger (Priority (INFO), errorM, infoM, rootLoggerName, setHandlers, setLevel, updateGlobalLogger)
-import Control.Monad.Reader (ReaderT (runReaderT), MonadIO (liftIO), ask, MonadReader (ask))
 
 data Config = Config
   { _directory :: FilePath,
@@ -112,12 +113,28 @@ handleRequest clientSocket = do
 
 respond :: HttpRequest -> App HttpResponse
 respond req =
+  case _reqMethod req of
+    "GET" -> respondGet req
+    "POST" -> respondPost req
+    _ -> return $ notFoundResponse req
+
+respondGet :: HttpRequest -> App HttpResponse
+respondGet req =
   case _reqPath req of
     "/" -> return $ HttpResponse (_reqVersion req) statusOk [("Content-Type", "text/plain")] ""
     "/user-agent" -> return $ mkUserAgentResponse (_reqHeaders req)
     (BC.stripPrefix "/echo/" -> Just str) -> return $ mkEchoResponse str
-    (BC.stripPrefix "/files/" -> Just fileName) -> mkFileResponse fileName
-    _ -> return $ HttpResponse (_reqVersion req) statusNotFound [] ""
+    (BC.stripPrefix "/files/" -> Just fileName) -> mkGetFileResponse $ BC.unpack fileName
+    _ -> return $ notFoundResponse req
+
+respondPost :: HttpRequest -> App HttpResponse
+respondPost req =
+  case _reqPath req of
+    (BC.stripPrefix "/files/" -> Just fileName) -> mkPostFileResponse (BC.unpack fileName) (_reqBody req)
+    _ -> return $ notFoundResponse req
+
+notFoundResponse :: HttpRequest -> HttpResponse
+notFoundResponse req = HttpResponse (_reqVersion req) statusNotFound [] ""
 
 data HttpRequest = HttpRequest
   { _reqVersion :: ByteString,
@@ -180,10 +197,10 @@ mkEchoResponse body = HttpResponse "HTTP/1.1" statusOk headers body
         ("Content-Length", (BC.pack . show . BC.length) body)
       ]
 
-mkFileResponse :: ByteString -> App HttpResponse
-mkFileResponse filename = do
+mkGetFileResponse :: FilePath -> App HttpResponse
+mkGetFileResponse filename = do
   config <- ask
-  let path = _directory config <> BC.unpack filename
+  let path = _directory config <> filename
   liftIO $ catch (successResponse path) errorResponse
   where
     readContent = fmap BC.pack . readFile
@@ -200,6 +217,21 @@ mkFileResponse filename = do
         ("Content-Length", (BC.pack . show . BC.length) content)
       ]
 
+mkPostFileResponse :: FilePath -> ByteString -> App HttpResponse
+mkPostFileResponse filename content = do
+  config <- ask
+  let path = _directory config <> filename
+  liftIO $ catch (successResponse path) errorResponse
+  where
+    successResponse :: FilePath -> IO HttpResponse
+    successResponse path = do
+      writeFile path $ BC.unpack content
+      return $ HttpResponse "HTTP/1.1" statusCreated [] ""
+    errorResponse :: IOException -> IO HttpResponse
+    errorResponse e = do
+      logError $ "Cannot write file: " <> show e
+      return $ HttpResponse "HTTP/1.1" statusInternalServerError [] ""
+
 data HttpStatus = HttpStatus
   { _statusCode :: Int,
     _statusMessage :: ByteString
@@ -209,8 +241,14 @@ data HttpStatus = HttpStatus
 statusOk :: HttpStatus
 statusOk = HttpStatus 200 "OK"
 
+statusCreated :: HttpStatus
+statusCreated = HttpStatus 201 "Created"
+
 statusNotFound :: HttpStatus
 statusNotFound = HttpStatus 404 "Not Found"
+
+statusInternalServerError :: HttpStatus
+statusInternalServerError = HttpStatus 500 "Internal Server Error"
 
 serializeResponse :: HttpResponse -> ByteString
 serializeResponse res = BC.intercalate "\r\n" [version <> " " <> status, headers, "", body]
