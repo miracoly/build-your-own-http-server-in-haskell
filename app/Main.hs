@@ -11,7 +11,6 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BC
 import Data.List.Split (splitOn)
 import Data.Maybe (mapMaybe)
-import GHC.Profiling (requestHeapCensus)
 import Network.Socket
 import Network.Socket.ByteString (recv, sendAll)
 import Options.Applicative (Parser, auto, execParser, help, info, long, metavar, option, short, strOption, value)
@@ -120,12 +119,15 @@ respond req =
 
 respondGet :: HttpRequest -> App HttpResponse
 respondGet req =
-  case _reqPath req of
-    "/" -> return $ HttpResponse (_reqVersion req) statusOk [("Content-Type", "text/plain")] ""
-    "/user-agent" -> return $ mkUserAgentResponse (_reqHeaders req)
-    (BC.stripPrefix "/echo/" -> Just str) -> return $ mkEchoResponse str
-    (BC.stripPrefix "/files/" -> Just fileName) -> mkGetFileResponse $ BC.unpack fileName
-    _ -> return $ notFoundResponse req
+  let
+    acceptsGzip :: Bool
+    acceptsGzip =  ((Just "gzip" ==) . lookup "Accept-Encoding") $ _reqHeaders req
+   in case _reqPath req of
+        "/" -> return $ HttpResponse (_reqVersion req) statusOk [("Content-Type", "text/plain")] ""
+        "/user-agent" -> return $ mkUserAgentResponse (_reqHeaders req)
+        (BC.stripPrefix "/echo/" -> Just str) -> return $ mkEchoResponse acceptsGzip str
+        (BC.stripPrefix "/files/" -> Just fileName) -> mkGetFileResponse $ BC.unpack fileName
+        _ -> return $ notFoundResponse req
 
 respondPost :: HttpRequest -> App HttpResponse
 respondPost req =
@@ -191,13 +193,14 @@ mkUserAgentResponse reqHeaders =
             resHeaders = [("Content-Type", "text/plain"), ("Content-Length", (BC.pack . show . BC.length) userAgent)]
         Nothing -> HttpResponse "HTTP/1.1" statusNotFound [] ""
 
-mkEchoResponse :: ByteString -> HttpResponse
-mkEchoResponse body = HttpResponse "HTTP/1.1" statusOk headers body
+mkEchoResponse :: Bool -> ByteString -> HttpResponse
+mkEchoResponse encodeGzip body = HttpResponse "HTTP/1.1" statusOk headers body
   where
     headers =
       [ ("Content-Type", "text/plain"),
         ("Content-Length", (BC.pack . show . BC.length) body)
-      ]
+      ] <> ([("Content-Encoding", "gzip") | encodeGzip])
+
 
 mkGetFileResponse :: FilePath -> App HttpResponse
 mkGetFileResponse filename = do
