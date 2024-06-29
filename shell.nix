@@ -1,8 +1,9 @@
 let
-  pkgs = import (fetchTarball "https://github.com/NixOS/nixpkgs/archive/cc54fb41d13736e92229c21627ea4f22199fee6b.tar.gz") {};
+  pkgs = import (fetchTarball "https://github.com/NixOS/nixpkgs/archive/89c49874fb15f4124bf71ca5f42a04f2ee5825fd.tar.gz") {};
   ghcVersion = "ghc946";  # Corresponds to GHC 9.4.6
   ghcWithPackages = pkgs.haskell.packages.${ghcVersion}.ghcWithPackages (pkgs: with pkgs; [
     haskell-language-server
+    hoogle
     # Add other Haskell dependencies here if needed
   ]);
 in
