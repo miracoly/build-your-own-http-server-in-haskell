@@ -119,15 +119,21 @@ respond req =
 
 respondGet :: HttpRequest -> App HttpResponse
 respondGet req =
-  let
-    acceptsGzip :: Bool
-    acceptsGzip =  ((Just "gzip" ==) . lookup "Accept-Encoding") $ _reqHeaders req
+  let acceptsGzip :: Bool
+      acceptsGzip = "gzip" `elem` acceptedEncdings req
    in case _reqPath req of
         "/" -> return $ HttpResponse (_reqVersion req) statusOk [("Content-Type", "text/plain")] ""
         "/user-agent" -> return $ mkUserAgentResponse (_reqHeaders req)
         (BC.stripPrefix "/echo/" -> Just str) -> return $ mkEchoResponse acceptsGzip str
         (BC.stripPrefix "/files/" -> Just fileName) -> mkGetFileResponse $ BC.unpack fileName
         _ -> return $ notFoundResponse req
+
+acceptedEncdings :: HttpRequest -> [ByteString]
+acceptedEncdings req = (maybe [] (filterValid . _split) . lookup "Accept-Encoding") $ _reqHeaders req
+  where
+    _split = fmap BC.pack . splitOn ", " . BC.unpack
+    filterValid = filter (`elem` validEncodings)
+    validEncodings = ["gzip"] :: [ByteString]
 
 respondPost :: HttpRequest -> App HttpResponse
 respondPost req =
@@ -199,8 +205,8 @@ mkEchoResponse encodeGzip body = HttpResponse "HTTP/1.1" statusOk headers body
     headers =
       [ ("Content-Type", "text/plain"),
         ("Content-Length", (BC.pack . show . BC.length) body)
-      ] <> ([("Content-Encoding", "gzip") | encodeGzip])
-
+      ]
+        <> ([("Content-Encoding", "gzip") | encodeGzip])
 
 mkGetFileResponse :: FilePath -> App HttpResponse
 mkGetFileResponse filename = do
