@@ -29,6 +29,7 @@ dependencies:
   - split >= 0.2.3 && < 0.3 # to split strings
   - optparse-applicative >= 0.17 && < 0.18 # to parse command line arguments
   - mtl >= 2.2.2 && < 2.3 # to handle monads
+  - zlib >= 0.6.3.0 && < 0.7
 
 executables:
   hs-http-server-clone-exe:

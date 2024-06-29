@@ -20,6 +20,8 @@ import System.Log.Formatter (simpleLogFormatter)
 import System.Log.Handler (setFormatter)
 import System.Log.Handler.Simple (streamHandler)
 import System.Log.Logger (Priority (INFO), errorM, infoM, rootLoggerName, setHandlers, setLevel, updateGlobalLogger)
+import Codec.Compression.GZip (compress)
+import qualified Data.ByteString.Lazy as BCL
 
 data Config = Config
   { _directory :: FilePath,
@@ -200,11 +202,12 @@ mkUserAgentResponse reqHeaders =
         Nothing -> HttpResponse "HTTP/1.1" statusNotFound [] ""
 
 mkEchoResponse :: Bool -> ByteString -> HttpResponse
-mkEchoResponse encodeGzip body = HttpResponse "HTTP/1.1" statusOk headers body
+mkEchoResponse encodeGzip body = HttpResponse "HTTP/1.1" statusOk headers _body
   where
+    _body = if encodeGzip then (BCL.toStrict . compress . BCL.fromStrict) body else body
     headers =
       [ ("Content-Type", "text/plain"),
-        ("Content-Length", (BC.pack . show . BC.length) body)
+        ("Content-Length", (BC.pack . show . BC.length) _body)
       ]
         <> ([("Content-Encoding", "gzip") | encodeGzip])
 
