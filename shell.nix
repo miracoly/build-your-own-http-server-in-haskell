@@ -7,7 +7,7 @@ let
     # Add other Haskell dependencies here if needed
   ]);
 in
-pkgs.mkShell {
+pkgs.mkShell rec {
   buildInputs = [
     ghcWithPackages
     pkgs.stack
@@ -19,4 +19,5 @@ pkgs.mkShell {
   shellHook = ''
     echo "Nix shell with GHC ${ghcVersion} and Haskell Language Server"
   '';
+  LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath buildInputs;
 }
